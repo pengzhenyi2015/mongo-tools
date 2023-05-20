@@ -435,8 +435,12 @@ func (restore *MongoRestore) Restore() Result {
 			target,
 		)
 	default:
-		log.Logvf(log.Always, "preparing collections to restore from")
-		err = restore.CreateAllIntents(target)
+		if !restore.InputOptions.OnlyOplogReplay {
+			log.Logvf(log.Always, "preparing collections to restore from")
+			err = restore.CreateAllIntents(target)
+		} else {
+			log.Logvf(log.Always, "no collections to restore, only replay oplog")
+		}
 	}
 	if err != nil {
 		return Result{Err: fmt.Errorf("error scanning filesystem: %v", err)}
@@ -456,7 +460,7 @@ func (restore *MongoRestore) Restore() Result {
 	if restore.InputOptions.OplogReplay && restore.manager.Oplog() == nil {
 		return Result{Err: fmt.Errorf("no oplog file to replay; make sure you run mongodump with --oplog")}
 	}
-	if restore.manager.GetOplogConflict() {
+	if restore.manager.GetOplogConflict() && !restore.InputOptions.OnlyOplogReplay {
 		return Result{Err: fmt.Errorf("cannot provide both an oplog.bson file and an oplog file with --oplogFile, " +
 			"nor can you provide both a local/oplog.rs.bson and a local/oplog.$main.bson file")}
 	}
@@ -472,6 +476,16 @@ func (restore *MongoRestore) Restore() Result {
 	if restore.OutputOptions.DryRun {
 		log.Logvf(log.Always, "dry run completed")
 		return Result{}
+	}
+
+	// if OnlyOplogReplay is set, skip all intents restoration
+	if restore.InputOptions.OnlyOplogReplay {
+		err = restore.RestoreOplog()
+		if err != nil {
+			return Result{0, 0, fmt.Errorf("restore error: %v", err)}
+		}
+		log.Logvf(log.Always, "replay oplog finished")
+		return Result{0, 0, nil}
 	}
 
 	demuxFinished := make(chan interface{})

@@ -42,6 +42,7 @@ const (
 	OplogReplayOption            = "--oplogReplay"
 	OplogLimitOption             = "--oplogLimit"
 	OplogFileOption              = "--oplogFile"
+	OnlyOplogReplayOption        = "--onlyOplogReplay"
 	ArchiveOption                = "--archive" // Value is optional, so must use '=' if specifying one
 	RestoreDBUsersAndRolesOption = "--restoreDbUsersAndRoles"
 	DirectoryOption              = "--dir"
@@ -54,6 +55,7 @@ type InputOptions struct {
 	OplogReplay            bool   `long:"oplogReplay" description:"replay oplog for point-in-time restore"`
 	OplogLimit             string `long:"oplogLimit" value-name:"<seconds>[:ordinal]" description:"only include oplog entries before the provided Timestamp"`
 	OplogFile              string `long:"oplogFile" value-name:"<filename>" description:"oplog file to use for replay of oplog"`
+	OnlyOplogReplay        bool   `long:"onlyOplogReplay" description:"only replay oplog"`
 	Archive                string `long:"archive" value-name:"<filename>" optional:"true" optional-value:"-" description:"restore dump from the specified archive file.  If flag is specified without a value, archive is read from stdin"`
 	RestoreDBUsersAndRoles bool   `long:"restoreDbUsersAndRoles" description:"restore user and role definitions for the given database"`
 	Directory              string `long:"dir" value-name:"<directory-name>" description:"input directory, use '-' for stdin"`
@@ -182,6 +184,16 @@ func ParseOptions(rawArgs []string, versionStr, gitCommit string) (Options, erro
 		return Options{}, fmt.Errorf("error parsing write concern: %v", err)
 	}
 	opts.WriteConcern = wc
+
+	// if OnlyOplogReplay flag is set, then all NS options and DB options should be cleared
+	if inputOpts.OnlyOplogReplay {
+		opts.Namespace.DB = ""
+		opts.Namespace.Collection = ""
+		nsOpts.NSExclude = []string{}
+		nsOpts.NSInclude = []string{}
+		nsOpts.NSFrom = []string{}
+		nsOpts.NSTo = []string{}
+	}
 
 	return Options{opts, inputOpts, nsOpts, outputOpts, targetDir}, nil
 }
