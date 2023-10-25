@@ -1,3 +1,63 @@
+写在前面
+===================================
+代码仓库基于 MongoDB 官方 mongo-tools 的 100.7.0 版本开发。
+
+官方代码地址：https://github.com/mongodb/mongo-tools.git
+
+改动
+----------
+在原生 mongodump/mongorestore 的工具上支持**只备份和回档 oplog，而对用户库表不进行备份和回档**。用户库表会通过另外的物理备份流程来完成。
+
+上述功能通过新增的参数来指定。**如果不指定新增参数，则 100% 兼容原生行为。**
+
+具体新增的参数如下。
+
+mongodump:
+ - **onlyOplog** - 只备份 oplog，不备份用户的库表。
+ - **oplogStart** - 备份 oplog 的起始时间，秒级时间戳。如果备份节点最旧的 opTime 已经大于这个值，备份失败。
+ - **oplogEnd** - 备份 oplog 的结束时间，秒级时间戳。如果备份节点最旧的 opTime 已经大于这个值，备份失败；如果最新的 opTime 小于这个值，会等待 1 分钟，让 oplog 追上来，如果还不满足，则备份失败。
+
+mongorestore:
+- **onlyOplogReplay** - 只回档 oplog
+
+如何使用
+--------
+参考示例：
+
+mongodump:
+
+无 SSL：
+```
+./bin/mongodump --uri=mongodb://xxx:xxx@127.0.0.1:7000/admin?readConcernLevel=majority --onlyOplog --oplogStart=1684390978 --oplogEnd=1684391088 --out=dump1
+```
+
+有 SSL：
+```
+./bin/mongodump --uri=mongodb://xxx:xxx@127.0.0.1:7000/admin?readConcernLevel=majority --onlyOplog --oplogStart=1684390978 --oplogEnd=1684391088 --out=dump1 --ssl --sslCAFile=/xxx/mongodb.pem --tlsInsecure
+```
+
+mongorestore:
+
+无 SSL: 
+```
+./bin/mongorestore --uri=mongodb://xxx:xxx@127.0.0.1:7000/admin?readConcernLevel=majority --oplogReplay --onlyOplogReplay --oplogFile=dump1/oplog.bson --dir=dump1
+```
+
+有 SSL: 
+```
+./bin/mongorestore --uri=mongodb://xxx:xxx@127.0.0.1:7000/admin?readConcernLevel=majority --oplogReplay --onlyOplogReplay --oplogFile=dump1/oplog.bson --dir=dump1 --ssl --sslCAFile=/xxx/mongodb.pem --tlsInsecure
+```
+
+如何编译
+-----------
+1. 安装好 Golang，配置好 GOPATH
+2. 创建存放代码的目录，如: mkdir -p $GOPATH/src/github.com/mongodb/
+3. cd 到上面新建的目录下，git clone 代码，然后 cd mongo-tools:
+4. 然后执行编译，编译完成之后的二进制都会放在 ./bin 目录下
+```
+~/gocode/src/github.com/mongodb/mongo-tools$./make build
+```
+
 MongoDB Tools
 ===================================
 

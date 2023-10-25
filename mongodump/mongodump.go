@@ -300,15 +300,17 @@ func (dump *MongoDump) Dump() (err error) {
 	// oplog entry and save its timestamp, this will let us later
 	// copy all oplog entries that occurred while dumping, creating
 	// what is effectively a point-in-time snapshot.
-	if dump.OutputOptions.Oplog {
+	if dump.OutputOptions.Oplog || dump.OutputOptions.OnlyOplog {
 		err := dump.determineOplogCollectionName()
 		if err != nil {
 			return fmt.Errorf("error finding oplog: %v", err)
 		}
 		log.Logvf(log.Info, "getting most recent oplog timestamp")
-		dump.oplogStart, err = dump.getOplogCopyStartTime()
-		if err != nil {
-			return fmt.Errorf("error getting oplog start: %v", err)
+		if !dump.OutputOptions.OnlyOplog {
+			dump.oplogStart, err = dump.getOplogCopyStartTime()
+			if err != nil {
+				return fmt.Errorf("error getting oplog start: %v", err)
+			}
 		}
 	}
 
@@ -320,7 +322,9 @@ func (dump *MongoDump) Dump() (err error) {
 	// switch on what kind of execution to do
 	switch {
 	case dump.ToolOptions.DB == "" && dump.ToolOptions.Collection == "":
-		err = dump.CreateAllIntents()
+		if !dump.OutputOptions.OnlyOplog {
+			err = dump.CreateAllIntents()
+		}
 	case dump.ToolOptions.DB != "" && dump.ToolOptions.Collection == "":
 		err = dump.CreateIntentsForDatabase(dump.ToolOptions.DB)
 	case dump.ToolOptions.DB != "" && dump.ToolOptions.Collection != "":
@@ -330,10 +334,13 @@ func (dump *MongoDump) Dump() (err error) {
 		return fmt.Errorf("error creating intents to dump: %v", err)
 	}
 
-	if dump.OutputOptions.Oplog {
+	if dump.OutputOptions.Oplog || dump.OutputOptions.OnlyOplog {
 		err = dump.CreateOplogIntents()
 		if err != nil {
 			return err
+		}
+		if dump.OutputOptions.OnlyOplog {
+			goto oplog
 		}
 	}
 
@@ -406,6 +413,7 @@ func (dump *MongoDump) Dump() (err error) {
 		return err
 	}
 
+oplog:
 	// IO Phase III
 	// oplog
 
@@ -416,10 +424,15 @@ func (dump *MongoDump) Dump() (err error) {
 	// while dumping the database. Before and after dumping the oplog,
 	// we check to see if the oplog has rolled over (i.e. the most recent entry when
 	// we started still exist, so we know we haven't lost data)
-	if dump.OutputOptions.Oplog {
-		dump.oplogEnd, err = dump.getCurrentOplogTime()
-		if err != nil {
-			return fmt.Errorf("error getting oplog end: %v", err)
+	if dump.OutputOptions.Oplog || dump.OutputOptions.OnlyOplog {
+		if dump.OutputOptions.OnlyOplog {
+			dump.oplogStart = primitive.Timestamp{T: dump.OutputOptions.OplogStart, I: uint32(0)}
+			dump.oplogEnd = primitive.Timestamp{T: dump.OutputOptions.OplogEnd + 1, I: uint32(0)}
+		} else {
+			dump.oplogEnd, err = dump.getCurrentOplogTime()
+			if err != nil {
+				return fmt.Errorf("error getting oplog end: %v", err)
+			}
 		}
 
 		log.Logvf(log.DebugLow, "checking if oplog entry %v still exists", dump.oplogStart)
@@ -431,6 +444,29 @@ func (dump *MongoDump) Dump() (err error) {
 		if err != nil {
 			return fmt.Errorf("unable to check oplog for overflow: %v", err)
 		}
+
+		// 如果指定 oplogEnd，则需要保证节点的 lastWriteOptime > oplogEnd,
+		// 否则可能出现：到一个延迟较大的节点备份，并没有备份完整的 oplog.
+		// 如果不满足上述条件，则等待条件满足。由于 mongod 内部每隔 10s 有一次 noop oplog,
+		// 因此,即使等待也不会太久.
+		if dump.OutputOptions.OnlyOplog {
+			checkOplogEndTs := time.Now().Unix()
+			for {
+				exists, err := dump.checkOplogTimestampReached(dump.oplogEnd)
+				if err != nil {
+					return fmt.Errorf("unable to check oplog for newest: %v", err)
+				}
+				if exists {
+					break
+				}
+
+				if time.Now().Unix()-checkOplogEndTs > 60 {
+					return fmt.Errorf("this node's oplog is too old compare to oplogEnd")
+				}
+				time.Sleep(time.Second)
+			}
+		}
+
 		log.Logvf(log.DebugHigh, "oplog entry %v still exists", dump.oplogStart)
 
 		log.Logvf(log.Always, "writing captured oplog to %v", dump.manager.Oplog().Location)

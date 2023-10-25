@@ -124,6 +124,31 @@ func (dump *MongoDump) checkOplogTimestampExists(ts primitive.Timestamp) (bool, 
 	return true, nil
 }
 
+// checkOplogTimestampReached make sure newest opTime has reached ts.
+// return true if newestOpTime >= ts
+func (dump *MongoDump) checkOplogTimestampReached(ts primitive.Timestamp) (bool, error) {
+	newestOplogEntry := db.Oplog{}
+	var tempBSON bson.Raw
+
+	err := dump.SessionProvider.FindOne("local", dump.oplogCollection, 0, nil, &bson.M{"$natural": -1}, &tempBSON, 0)
+	if err != nil {
+		return false, fmt.Errorf("unable to read entry from oplog: %v", err)
+	}
+	err = bson.Unmarshal(tempBSON, &newestOplogEntry)
+	if err != nil {
+		return false, err
+	}
+
+	log.Logvf(log.DebugHigh, "newest oplog entry has timestamp %v", newestOplogEntry.Timestamp)
+	if util.TimestampLessThan(newestOplogEntry.Timestamp, ts) {
+		log.Logvf(log.Always, "newest oplog entry of timestamp %v is older than %v",
+			newestOplogEntry.Timestamp, ts)
+		return false, nil
+	}
+
+	return true, nil
+}
+
 func oplogDocumentValidator(in []byte) error {
 	raw := bson.Raw(in)
 
